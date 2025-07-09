@@ -4,7 +4,42 @@ from assessment import compute_scores
 from planner import generate_plan, accuracy_to_cefr
 from db import CoachDB
 from progress import kpi_dataframe, sparkline_data, moving_average, month_over_month
-from ui import CoachWindow, qasync, QtWidgets
+
+GUI_AVAILABLE = True
+try:
+    from ui import CoachWindow, qasync, QtWidgets
+except ImportError as e:  # pragma: no cover - only runs without PySide6
+    print(
+        "⚠️ GUI could not be initialized: " + str(e)
+    )
+    print(
+        "Install PySide6 via 'pip install pyside6' and ensure Qt/libEGL packages are installed.\n"
+        "On Ubuntu you can run: sudo apt-get install libegl1"
+    )
+    GUI_AVAILABLE = False
+
+class ConsoleUI:
+    """Fallback interface printing updates to the terminal."""
+
+    def log_message(self, message: str):
+        print(message)
+
+    def live_metrics(self, pace, acc):
+        print(f"Live Metrics - WPM: {pace:.1f}, Acc: {acc:.1%}")
+
+    def history_update(self, analytics: dict):
+        print("History update:", analytics)
+
+    def update_summary(self, cefr: str, last_score: float, streak: int):
+        print(
+            f"Summary - Level: {cefr}, Last Score: {last_score:.1%}, Streak: {streak}"
+        )
+
+    def update_plan_steps(self, steps: list, play_callback_factory=None):
+        print("Plan Steps:")
+        for step in steps:
+            print(f"  {step.get('step_num', 0)}. {step.get('description', '')}")
+
 from prompt_engine import PromptEngine
 import datetime as dt
 import logging
@@ -95,12 +130,17 @@ async def main():
     user_id = await db.create_user("default")
     session_id = await db.create_session(user_id)
 
-    app = QtWidgets.QApplication([])
-    window = CoachWindow(); window.show()
-    loop = qasync.QEventLoop(app); asyncio.set_event_loop(loop)
+    if GUI_AVAILABLE:
+        app = QtWidgets.QApplication([])
+        window = CoachWindow(); window.show()
+        loop = qasync.QEventLoop(app); asyncio.set_event_loop(loop)
 
-    asyncio.ensure_future(voice_loop(cfg, db, window, user_id, session_id))
-    with loop: loop.run_forever()
+        asyncio.ensure_future(voice_loop(cfg, db, window, user_id, session_id))
+        with loop:
+            loop.run_forever()
+    else:
+        ui = ConsoleUI()
+        await voice_loop(cfg, db, ui, user_id, session_id)
 
 if __name__ == "__main__":
     asyncio.run(main())
