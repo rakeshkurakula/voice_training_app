@@ -1,4 +1,11 @@
-from PySide6 import QtWidgets, QtGui, QtCharts, QtCore
+try:
+    from PySide6 import QtWidgets, QtGui, QtCharts, QtCore
+except ImportError as e:  # pragma: no cover - only runs without PySide6
+    raise ImportError(
+        "PySide6 or underlying Qt libraries are missing. "
+        "Install PySide6 via 'pip install pyside6' and ensure Qt/\n"
+        "libEGL packages are installed (e.g. on Ubuntu: 'sudo apt-get install libegl1')."
+    ) from e
 import pandas as pd, qasync, asyncio
 
 class ProgressChart(QtWidgets.QWidget):
