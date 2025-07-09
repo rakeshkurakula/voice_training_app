@@ -35,6 +35,7 @@ This application supports both OpenAI and Google Gemini for LLM-powered features
 - **Google Gemini**: Get your API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
 
 ### Application  flow
+```
 ┌────────────────────────────────────────────────────────────┐
 │                       main.py (Async Orchestrator)        │
 └───────────────▲───────────────────────────────▲────────────┘
@@ -64,3 +65,4 @@ This application supports both OpenAI and Google Gemini for LLM-powered features
             │  • GPT‑4o / Gemini     │
             │  • Retry & cost guard  │
             └────────────────────────┘
+```
