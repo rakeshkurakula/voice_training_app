@@ -131,16 +131,25 @@ async def main():
     session_id = await db.create_session(user_id)
 
     if GUI_AVAILABLE:
-        app = QtWidgets.QApplication([])
-        window = CoachWindow(); window.show()
-        loop = qasync.QEventLoop(app); asyncio.set_event_loop(loop)
+        try:
+            app = QtWidgets.QApplication([])
+            window = CoachWindow(); window.show()
+            loop = qasync.QEventLoop(app); asyncio.set_event_loop(loop)
 
-        asyncio.ensure_future(voice_loop(cfg, db, window, user_id, session_id))
-        with loop:
-            loop.run_forever()
-    else:
-        ui = ConsoleUI()
-        await voice_loop(cfg, db, ui, user_id, session_id)
+            asyncio.ensure_future(
+                voice_loop(cfg, db, window, user_id, session_id)
+            )
+            with loop:
+                loop.run_forever()
+            return
+        except Exception as e:  # pragma: no cover - depends on system Qt
+            print("⚠️ Qt GUI failed to start:", e)
+            print(
+                "Install system Qt libraries (e.g. libEGL) or run in CLI mode."
+            )
+
+    ui = ConsoleUI()
+    await voice_loop(cfg, db, ui, user_id, session_id)
 
 if __name__ == "__main__":
     asyncio.run(main())
