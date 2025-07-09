@@ -1,0 +1,25 @@
+{"id":1,"text":"She sells seashells by the seashore.","target_phonemes":["ʃ","s"],"difficulty":2}
+{"id":2,"text":"The quick brown fox jumps over the lazy dog.","target_phonemes":["kw","ʒ"],"difficulty":1}
+{"id":3,"text":"Red lorry, yellow lorry.","target_phonemes":["ɹ","l"],"difficulty":2}
+{"id":4,"text":"Pad kid poured curd‑pulled cod.","target_phonemes":["p","k","d"],"difficulty":3}
+{"id":5,"text":"I saw a kitten eating chicken in the kitchen.","target_phonemes":["ɪ","k","tʃ"],"difficulty":2}
+{"id":6,"text":"Truly rural.","target_phonemes":["tɹ","ɹ"],"difficulty":3}
+{"id":7,"text":"Greek grapes, Greek grapes.","target_phonemes":["g","ɹ","eɪ"],"difficulty":2}
+{"id":8,"text":"Which wristwatches are Swiss wristwatches?","target_phonemes":["w","ʃ","s"],"difficulty":3}
+{"id":9,"text":"Betty loves the velvet vest best.","target_phonemes":["v","b"],"difficulty":2}
+{"id":10,"text":"How now brown cow?","target_phonemes":["aʊ"],"difficulty":1}
+{"id":11,"text":"Thin things and thick things.","target_phonemes":["θ","ð"],"difficulty":2}
+{"id":12,"text":"Peggy Babcock.","target_phonemes":["p","b","k"],"difficulty":3}
+{"id":13,"text":"Unique New York.","target_phonemes":["juː","n","j","ɹk"],"difficulty":2}
+{"id":14,"text":"Six sleek swans swam swiftly southwards.","target_phonemes":["s","sw"],"difficulty":3}
+{"id":15,"text":"I would if I could but I can’t.","target_phonemes":["w","k"],"difficulty":1}
+{"id":16,"text":"Row the boat, don’t rock the boat.","target_phonemes":["ɹ","oʊ"],"difficulty":1}
+{"id":17,"text":"Fred fed Ted bread, and Ted fed Fred bread.","target_phonemes":["f","d","bɹ"],"difficulty":2}
+{"id":18,"text":"Peter Piper picked a peck of pickled peppers.","target_phonemes":["p"],"difficulty":3}
+{"id":19,"text":"A proper copper coffee pot.","target_phonemes":["p","k","ɒ"],"difficulty":2}
+{"id":20,"text":"See‑saw Margery Daw.","target_phonemes":["s","ɔː"],"difficulty":1}
+{"id":21,"text":"A happy hippo hopped and hic‑cupped.","target_phonemes":["h","p"],"difficulty":2}
+{"id":22,"text":"Smiling Sam sells slimy snails.","target_phonemes":["s","m","n"],"difficulty":3}
+{"id":23,"text":"Do drop in at the dew‑drop inn.","target_phonemes":["d","uː"],"difficulty":2}
+{"id":24,"text":"Blue bluebird beat a blue drum.","target_phonemes":["bl","uː"],"difficulty":2}
+{"id":25,"text":"Good blood, bad blood.","target_phonemes":["g","b","l"],"difficulty":2}
