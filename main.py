@@ -7,6 +7,7 @@ from progress import kpi_dataframe, sparkline_data, moving_average, month_over_m
 from ui import CoachWindow, qasync, QtWidgets
 from prompt_engine import PromptEngine
 import datetime as dt
+import logging
 
 def compute_streak(history):
     # Simple streak: count consecutive days with assessments up to today
@@ -31,6 +32,7 @@ def make_play_callback(step, voice_path):
     return callback
 
 async def voice_loop(cfg, db: CoachDB, ui: CoachWindow, user_id: int, session_id: int):
+    logging.info("[voice_loop] Started voice_loop for user_id=%s, session_id=%s", user_id, session_id)
     history_cache = []
     voice_path = cfg["tts"].get("voice_path", "models/piper/en_US-amy-medium.onnx")
     

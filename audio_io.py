@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio, queue, threading, subprocess, wave, pathlib, time
 from typing import AsyncGenerator
 from logging_utils import log_call
+import logging
+import tempfile
+import os
 
 FRAME_MS = 33  # 30 FPS default
 
@@ -10,6 +13,7 @@ class MicStreamer:
     """Pushes raw 16‑kHz PCM frames to a queue."""
 
     def __init__(self, frame_ms: int = FRAME_MS):
+        logging.info("[MicStreamer] Initializing microphone stream with frame_ms=%s", frame_ms)
         import pyaudio                       # lazy‑import
         self.p = pyaudio.PyAudio()
         self.frame_samples = int(16_000 * frame_ms / 1000)
@@ -35,35 +39,48 @@ async def pcm_generator(ms: int = FRAME_MS) -> AsyncGenerator[bytes, None]:
         data = await loop.run_in_executor(None, mic.q.get)
         yield data
 
-class WhisperWorker(threading.Thread):
-    """Wraps whisper.cpp cli for streaming transcription."""
+class WhisperWorker:
+    """Handles transcription by writing PCM to temp WAV and calling whisper-cli."""
+    def __init__(self, model_path):
+        self.model = model_path
+        self.language = "en"
 
-    @log_call
-    def __init__(self, model: str):
-        super().__init__(daemon=True)
-        self.proc = subprocess.Popen(
-            ["./whisper.cpp/build/bin/main", "-m", model, "-f", "-"], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, text=True, bufsize=0)
-        self.lines = queue.Queue()
+    def pcm_to_wav(self, pcm_bytes, wav_path, sample_rate=16000):
+        with wave.open(wav_path, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit PCM
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm_bytes)
 
-    @log_call
-    def run(self):
-        for line in self.proc.stdout:
-            self.lines.put(line.strip())
+    def transcribe(self, pcm_bytes):
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
+            self.pcm_to_wav(pcm_bytes, tmp_wav.name)
+            tmp_filename = tmp_wav.name
+        try:
+            result = subprocess.run([
+                "./whisper.cpp/build/bin/whisper-cli",
+                "-m", self.model,
+                "-f", tmp_filename,
+                "--language", self.language,
+                "--output-format", "txt"
+            ], capture_output=True, text=True)
+            if result.returncode != 0:
+                print("Whisper CLI error:", result.stderr)
+                return None
+            return result.stdout.strip()
+        finally:
+            os.unlink(tmp_filename)
 
-    @log_call
-    def push_audio(self, pcm: bytes): self.proc.stdin.write(pcm)
-
-    @log_call
-    def stop(self):
-        if self.proc:
-            self.proc.terminate()
-            self.proc = None
+async def transcribe_stream(model_path: str) -> AsyncGenerator[str, None]:
+    logging.info("[transcribe_stream] Starting transcription stream with model=%s", model_path)
+    worker = WhisperWorker(model_path)
+    async for chunk in pcm_generator():
+        transcript = worker.transcribe(chunk)
+        if transcript:
+            yield transcript
 
 class PiperWorker(threading.Thread):
     """Wraps Piper TTS for local text-to-speech."""
-
-    @log_call
     def __init__(self, voice_path: str):
         super().__init__(daemon=True)
         self.voice_path = voice_path
@@ -86,24 +103,12 @@ class PiperWorker(threading.Thread):
             self.proc.terminate()
             self.proc = None
 
-async def transcribe_stream(model: str) -> AsyncGenerator[str, None]:
-    worker = WhisperWorker(model); worker.start()
-    async for chunk in pcm_generator():
-        worker.push_audio(chunk)
-        try:
-            while True: yield worker.lines.get_nowait()
-        except queue.Empty:
-            continue
-
 async def play_tts(text: str, voice_path: str = "models/piper/en_US-amy-medium.onnx") -> str:
     """Synthesize and play text using Piper TTS. Returns path to generated audio."""
     worker = PiperWorker(voice_path)
     output_path = f"/tmp/tts_{int(time.time())}.wav"
-    
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, worker.synthesize, text, output_path)
-    
-    # Play the audio (platform-specific)
     await play_audio_file(output_path)
     return output_path
 
@@ -111,7 +116,6 @@ async def play_audio_file(file_path: str):
     """Play audio file using system audio player."""
     import platform
     system = platform.system()
-    
     if system == "Darwin":  # macOS
         subprocess.run(["afplay", file_path])
     elif system == "Linux":
@@ -120,16 +124,12 @@ async def play_audio_file(file_path: str):
         subprocess.run(["start", file_path], shell=True)
 
 async def practice_mode(reference_text: str, voice_path: str = "models/piper/en_US-amy-medium.onnx"):
-    """Practice mode: TTS speaks reference, user repeats."""
     print(f"🎤 Reference: {reference_text}")
     await play_tts(reference_text, voice_path)
     print("🎤 Your turn - repeat the text...")
-    # Continue with user's speech input...
 
 async def feedback_mode(user_audio_path: str, reference_text: str, voice_path: str = "models/piper/en_US-amy-medium.onnx"):
-    """Feedback mode: Compare user's pronunciation with TTS reference."""
     print("🎤 Playing your pronunciation...")
     await play_audio_file(user_audio_path)
-    
     print("🎤 Playing reference pronunciation...")
     await play_tts(reference_text, voice_path)
