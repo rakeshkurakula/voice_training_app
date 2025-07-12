@@ -211,3 +211,4 @@ __pycache__/*
 .DS_Store
 whisper.cpp/*
 data/*
+whisper.cpp/*
