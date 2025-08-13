@@ -1,9 +1,6 @@
 # Voice Training App
 
-[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](https://www.apple.com/macos/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/) [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](https://www.apple.com/macos/) [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 ## Overview
 
@@ -77,37 +74,37 @@ pyenv activate voicecoach
 
 #### Manual Installation
 
-1. **Install system dependencies:**
-   ```bash
-   brew install portaudio ffmpeg espeak-ng cmake pkg-config duckdb
-   ```
+1. Install system dependencies:
+```bash
+brew install portaudio ffmpeg espeak-ng cmake pkg-config duckdb
+```
 
-2. **Set up Python environment:**
-   ```bash
-   brew install pyenv
-   pyenv install 3.12.2
-   pyenv virtualenv 3.12.2 voicecoach
-   export PYENV_VERSION=voicecoach
-   ```
+2. Set up Python environment:
+```bash
+brew install pyenv
+pyenv install 3.12.2
+pyenv virtualenv 3.12.2 voicecoach
+export PYENV_VERSION=voicecoach
+```
 
-3. **Install Python packages:**
-   ```bash
-   pip install --upgrade pip wheel setuptools
-   pip install -r requirements.txt
-   ```
+3. Install Python packages:
+```bash
+pip install --upgrade pip wheel setuptools
+pip install -r requirements.txt
+```
 
-4. **Download AI models:**
-   ```bash
-   # Whisper.cpp for speech recognition
-   git clone --depth 1 https://github.com/ggml-org/whisper.cpp
-   cd whisper.cpp && make METAL=1 && \
-     ./models/download-ggml-model.sh tiny.en.int8 && cd ..
-   
-   # Piper TTS voice
-   mkdir -p models/piper && cd models/piper
-   curl -L -o amy-medium.tar.gz https://huggingface.co/rhasspy/piper-voices/resolve/main/en_US/amy/medium/en_US-amy-medium.tar.gz
-   tar -xf amy-medium.tar.gz && cd ../..
-   ```
+4. Download AI models:
+```bash
+# Whisper.cpp for speech recognition
+git clone --depth 1 https://github.com/ggml-org/whisper.cpp
+cd whisper.cpp && make METAL=1 && \
+  ./models/download-ggml-model.sh tiny.en.int8 && cd ..
+
+# Piper TTS voice
+mkdir -p models/piper && cd models/piper
+curl -L -o amy-medium.tar.gz https://huggingface.co/rhasspy/piper-voices/resolve/main/en_US/amy/medium/en_US-amy-medium.tar.gz
+tar -xf amy-medium.tar.gz && cd ../..
+```
 
 ### Linux Installation
 
@@ -135,27 +132,27 @@ pip install -r requirements.txt
 
 ### Environment Variables (.env)
 
-1. **Create environment file:**
-   ```bash
-   cp .env.example .env
-   ```
+1. Create environment file:
+```bash
+cp .env.example .env
+```
 
-2. **Edit .env with your API keys:**
-   ```env
-   # OpenAI Configuration
-   OPENAI_API_KEY=your_openai_api_key_here
-   OPENAI_ORG_ID=your_openai_org_id_here  # Optional
-   
-   # Google Gemini Configuration
-   GEMINI_API_KEY=your_gemini_api_key_here
-   ```
+2. Edit .env with your API keys:
+```bash
+# OpenAI Configuration
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_ORG_ID=your_openai_org_id_here  # Optional
+
+# Google Gemini Configuration
+GEMINI_API_KEY=your_gemini_api_key_here
+```
 
 ### Application Settings (config.yaml)
 
 ```yaml
 llm:
   provider: "openai"  # or "gemini"
-  model: "gpt-4o"     # or "gemini-1.5-pro-latest"
+  model: "gpt-4o"  # or "gemini-1.5-pro-latest"
 
 audio:
   frame_rate: 16000
@@ -201,6 +198,60 @@ python -m voice_training_app.cli practice --mode guided
 # View progress stats
 python -m voice_training_app.cli stats --days 7
 ```
+
+## Run Script Usage
+
+The `run.sh` script provides convenient commands for managing the application:
+
+### Basic Commands
+
+```bash
+# Start the application (default)
+./run.sh start
+
+# Stop the running application
+./run.sh stop
+
+# Check application status
+./run.sh status
+
+# Restart the application
+./run.sh restart
+```
+
+### Examples
+
+```bash
+# Start the application in the background
+./run.sh start
+# Output: Starting Voice Training App...
+# Output: Application started with PID 12345
+# Output: Logs available at: logs/app.log
+
+# Check if the application is running
+./run.sh status
+# Output: Voice Training App is running (PID: 12345)
+# Output: Log file: logs/app.log
+# Output: Uptime: 5 minutes
+
+# Stop the application
+./run.sh stop
+# Output: Stopping Voice Training App (PID: 12345)...
+# Output: Application stopped successfully
+
+# Restart the application
+./run.sh restart
+# Output: Stopping Voice Training App...
+# Output: Starting Voice Training App...
+# Output: Application restarted with PID 12346
+```
+
+### Important Notes
+
+- **Log File**: All application output is logged to `logs/app.log`
+- **PID File**: Process ID is stored in `voicecoach.pid` for process management
+- **Background Mode**: The application runs in the background when started with `./run.sh start`
+- **Auto-Setup**: The script automatically sets up the environment if not already configured
 
 ### Practice Modes
 
@@ -297,6 +348,7 @@ python -m pytest tests/test_assessment.py
 ### Common Issues
 
 #### Audio Problems
+
 ```bash
 # Issue: Audio not working
 # Solution: Install PortAudio and check permissions
@@ -305,6 +357,7 @@ brew install portaudio
 ```
 
 #### Model Issues
+
 ```bash
 # Issue: Whisper model not found
 # Solution: Re-download models
@@ -313,6 +366,7 @@ cd whisper.cpp
 ```
 
 #### API Errors
+
 ```bash
 # Issue: API authentication failed
 # Solution: Check API keys
@@ -321,6 +375,7 @@ curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models
 ```
 
 #### Environment Issues
+
 ```bash
 # Issue: Python environment problems
 # Solution: Reset virtual environment
@@ -362,5 +417,4 @@ tail -f logs/app.log
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
-
 **Made with ❤️ for better communication**
