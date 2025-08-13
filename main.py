@@ -4,6 +4,7 @@ from assessment import compute_scores
 from planner import generate_plan, accuracy_to_cefr
 from db import CoachDB
 from progress import kpi_dataframe, sparkline_data, moving_average, month_over_month
+
 GUI_AVAILABLE = True
 try:
     from ui import CoachWindow, qasync, QtWidgets
@@ -21,14 +22,18 @@ class ConsoleUI:
     """Fallback interface printing updates to the terminal."""
     def log_message(self, message: str):
         print(message)
+
     def live_metrics(self, pace, acc):
         print(f"Live Metrics - WPM: {pace:.1f}, Acc: {acc:.1%}")
+
     def history_update(self, analytics: dict):
         print("History update:", analytics)
+
     def update_summary(self, cefr: str, last_score: float, streak: int):
         print(
             f"Summary - Level: {cefr}, Last Score: {last_score:.1%}, Streak: {streak}"
         )
+
     def update_plan_steps(self, steps: list, play_callback_factory=None):
         print("Plan Steps:")
         for step in steps:
@@ -104,7 +109,7 @@ async def load_existing_plan(db, user_id):
     """Load the most recent plan for the user from database"""
     try:
         # Get the most recent plan for the user
-        plan = await db.get_latest_plan(user_id)
+        plan = await db.fetch_latest_plan(user_id)
         if plan:
             plan_id = plan.get('id')
             steps = await db.get_plan_steps(plan_id)
