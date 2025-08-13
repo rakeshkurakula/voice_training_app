@@ -4,7 +4,6 @@ from assessment import compute_scores
 from planner import generate_plan, accuracy_to_cefr
 from db import CoachDB
 from progress import kpi_dataframe, sparkline_data, moving_average, month_over_month
-
 GUI_AVAILABLE = True
 try:
     from ui import CoachWindow, qasync, QtWidgets
@@ -20,21 +19,16 @@ except ImportError as e:  # pragma: no cover - only runs without PySide6
 
 class ConsoleUI:
     """Fallback interface printing updates to the terminal."""
-
     def log_message(self, message: str):
         print(message)
-
     def live_metrics(self, pace, acc):
         print(f"Live Metrics - WPM: {pace:.1f}, Acc: {acc:.1%}")
-
     def history_update(self, analytics: dict):
         print("History update:", analytics)
-
     def update_summary(self, cefr: str, last_score: float, streak: int):
         print(
             f"Summary - Level: {cefr}, Last Score: {last_score:.1%}, Streak: {streak}"
         )
-
     def update_plan_steps(self, steps: list, play_callback_factory=None):
         print("Plan Steps:")
         for step in steps:
@@ -66,6 +60,17 @@ def make_play_callback(step, voice_path):
         asyncio.create_task(play_tts(step.get("description", ""), voice_path=voice_path))
     return callback
 
+def handle_session_start():
+    """Handler for session start signal"""
+    logging.info("Session started")
+    print("Session started")
+
+def handle_session_end(db, user_id, latest_accuracy, cfg):
+    """Handler for session end signal"""
+    logging.info(f"Session ended for user {user_id} with accuracy {latest_accuracy}")
+    print(f"Session ended for user {user_id} with accuracy {latest_accuracy}")
+    # Additional session cleanup logic can be added here
+
 async def voice_loop(cfg, db: CoachDB, ui: CoachWindow, user_id: int, session_id: int):
     logging.info("[voice_loop] Started voice_loop for user_id=%s, session_id=%s", user_id, session_id)
     history_cache = []
@@ -92,13 +97,11 @@ async def voice_loop(cfg, db: CoachDB, ui: CoachWindow, user_id: int, session_id
         utterance_id = await db.save_utterance(session_id, ref, hyp, wav_tmp)
         await db.save_metrics(utterance_id, s.__dict__)
         ui.live_metrics(s.pace_wpm, s.phoneme_acc)
-
         # Generate and store plan based on latest accuracy
         plan = generate_plan(s.phoneme_acc, weeks=cfg["plan"]["weeks"])
         plan_id = await db.save_plan(user_id, s.phoneme_acc, plan)
         for step in plan["steps"]:
             await db.save_plan_step(plan_id, step["step_num"], step["description"])
-
         # --- UI: Update summary and plan steps ---
         cefr = accuracy_to_cefr(s.phoneme_acc)
         last_score = s.phoneme_acc
@@ -109,7 +112,6 @@ async def voice_loop(cfg, db: CoachDB, ui: CoachWindow, user_id: int, session_id
         week = 1  # For now, always show week 1; can be dynamic
         week_steps = [step for step in plan["steps"] if step["week"] == week]
         ui.update_plan_steps(week_steps, play_callback_factory=lambda step: make_play_callback(step, voice_path))
-
         # refresh history sparklines every autosave_interval
         history_cache.append(s.__dict__)
         if len(history_cache) % 10 == 0:
@@ -125,17 +127,24 @@ async def voice_loop(cfg, db: CoachDB, ui: CoachWindow, user_id: int, session_id
 async def main():
     cfg = yaml.safe_load(open("config.yaml"))
     db = CoachDB(cfg["database"]["path"]); await db.init()
-
     # Create or get user (for demo, single user 'default')
     user_id = await db.create_user("default")
     session_id = await db.create_session(user_id)
-
+    
     if GUI_AVAILABLE:
         try:
             app = QtWidgets.QApplication([])
             window = CoachWindow(); window.show()
+            
+            # Connect UI signals to handlers
+            if hasattr(window, 'session_start'):
+                window.session_start.connect(handle_session_start)
+            if hasattr(window, 'session_end'):
+                # Get latest accuracy for session end handler
+                latest_accuracy = 0.0  # This should be updated with actual latest accuracy
+                window.session_end.connect(lambda: handle_session_end(db, user_id, latest_accuracy, cfg))
+            
             loop = qasync.QEventLoop(app); asyncio.set_event_loop(loop)
-
             asyncio.ensure_future(
                 voice_loop(cfg, db, window, user_id, session_id)
             )
@@ -147,7 +156,6 @@ async def main():
             print(
                 "Install system Qt libraries (e.g. libEGL) or run in CLI mode."
             )
-
     ui = ConsoleUI()
     await voice_loop(cfg, db, ui, user_id, session_id)
 
