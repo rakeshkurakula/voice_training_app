@@ -4,6 +4,7 @@ from assessment import compute_scores
 from planner import generate_plan, accuracy_to_cefr
 from db import CoachDB
 from progress import kpi_dataframe, sparkline_data, moving_average, month_over_month
+
 GUI_AVAILABLE = True
 try:
     from ui import CoachWindow, qasync, QtWidgets
@@ -71,10 +72,24 @@ def handle_session_end(db, user_id, latest_accuracy, cfg):
     print(f"Session ended for user {user_id} with accuracy {latest_accuracy}")
     # Additional session cleanup logic can be added here
 
+async def persist_step_completion(db, current_plan_id, step_num, completed, ui):
+    """Async function to persist step completion and refresh progress"""
+    try:
+        await db.update_plan_step_completion(current_plan_id, step_num, completed)
+        # Refresh progress display
+        ui.log_message(f"Step {step_num} completion updated: {completed}")
+    except Exception as e:
+        ui.log_message(f"Error updating step completion: {e}")
+        logging.error(f"Error updating step completion: {e}")
+
 async def voice_loop(cfg, db: CoachDB, ui: CoachWindow, user_id: int, session_id: int):
     logging.info("[voice_loop] Started voice_loop for user_id=%s, session_id=%s", user_id, session_id)
     history_cache = []
     voice_path = cfg["tts"].get("voice_path", "models/piper/en_US-amy-medium.onnx")
+    
+    # Nonlocal variable to track latest accuracy across utterances
+    latest_accuracy = 0.0
+    current_plan_id = None
     
     # Initialize PromptEngine with configuration
     try:
@@ -87,31 +102,46 @@ async def voice_loop(cfg, db: CoachDB, ui: CoachWindow, user_id: int, session_id
         ui.log_message(f"⚠️ LLM initialization failed: {e}")
         prompt_engine = None
     
+    # Connect step_toggled signal to persist function
+    if hasattr(ui, 'step_toggled'):
+        def on_step_toggled(step_num, completed):
+            if current_plan_id:
+                asyncio.create_task(persist_step_completion(db, current_plan_id, step_num, completed, ui))
+        ui.step_toggled.connect(on_step_toggled)
+    
     async for hyp in transcribe_stream(cfg["stt"]["model_path"]):
         if not hyp.endswith("\n"):  # still streaming
             continue
         ref = hyp.strip()
         wav_tmp = "/tmp/utt.wav"  # recorded in audio_io
         s = compute_scores(ref, hyp, wav_tmp)
+        
+        # Update latest_accuracy with each utterance
+        latest_accuracy = s.phoneme_acc
+        
         # Save utterance and metrics
         utterance_id = await db.save_utterance(session_id, ref, hyp, wav_tmp)
         await db.save_metrics(utterance_id, s.__dict__)
         ui.live_metrics(s.pace_wpm, s.phoneme_acc)
+        
         # Generate and store plan based on latest accuracy
         plan = generate_plan(s.phoneme_acc, weeks=cfg["plan"]["weeks"])
-        plan_id = await db.save_plan(user_id, s.phoneme_acc, plan)
+        current_plan_id = await db.save_plan(user_id, s.phoneme_acc, plan)
         for step in plan["steps"]:
-            await db.save_plan_step(plan_id, step["step_num"], step["description"])
+            await db.save_plan_step(current_plan_id, step["step_num"], step["description"])
+        
         # --- UI: Update summary and plan steps ---
         cefr = accuracy_to_cefr(s.phoneme_acc)
         last_score = s.phoneme_acc
         hist = await db.fetch_history(user_id, limit=100)
         streak = compute_streak(hist)
         ui.update_summary(cefr, last_score, streak)
+        
         # Show only current week's steps
         week = 1  # For now, always show week 1; can be dynamic
         week_steps = [step for step in plan["steps"] if step["week"] == week]
         ui.update_plan_steps(week_steps, play_callback_factory=lambda step: make_play_callback(step, voice_path))
+        
         # refresh history sparklines every autosave_interval
         history_cache.append(s.__dict__)
         if len(history_cache) % 10 == 0:
@@ -123,6 +153,9 @@ async def voice_loop(cfg, db: CoachDB, ui: CoachWindow, user_id: int, session_id
                 "mom": month_over_month(df, kpi="phoneme_acc") if not df.empty else None,
             }
             ui.history_update(analytics)
+    
+    # Return latest_accuracy for session end handler
+    return latest_accuracy
 
 async def main():
     cfg = yaml.safe_load(open("config.yaml"))
@@ -136,18 +169,24 @@ async def main():
             app = QtWidgets.QApplication([])
             window = CoachWindow(); window.show()
             
+            # Maintain latest_accuracy as shared variable
+            latest_accuracy = 0.0
+            
             # Connect UI signals to handlers
             if hasattr(window, 'session_start'):
                 window.session_start.connect(handle_session_start)
             if hasattr(window, 'session_end'):
-                # Get latest accuracy for session end handler
-                latest_accuracy = 0.0  # This should be updated with actual latest accuracy
+                # Pass latest_accuracy to session end handler
                 window.session_end.connect(lambda: handle_session_end(db, user_id, latest_accuracy, cfg))
             
             loop = qasync.QEventLoop(app); asyncio.set_event_loop(loop)
-            asyncio.ensure_future(
-                voice_loop(cfg, db, window, user_id, session_id)
-            )
+            
+            # Run voice loop and capture latest_accuracy
+            async def run_voice_loop():
+                nonlocal latest_accuracy
+                latest_accuracy = await voice_loop(cfg, db, window, user_id, session_id)
+            
+            asyncio.ensure_future(run_voice_loop())
             with loop:
                 loop.run_forever()
             return
@@ -156,6 +195,7 @@ async def main():
             print(
                 "Install system Qt libraries (e.g. libEGL) or run in CLI mode."
             )
+    
     ui = ConsoleUI()
     await voice_loop(cfg, db, ui, user_id, session_id)
 
