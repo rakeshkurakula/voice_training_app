@@ -1,23 +1,67 @@
 # Voice Training App
-A real-time voice and articulation training application that provides instant feedback on pronunciation, pace, and speech clarity using AI-powered assessment.
 
-## 🚀 Features
+[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](https://www.apple.com/macos/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
+## Overview
+
+Voice Training App is a real-time voice and articulation training application that provides instant feedback on pronunciation, pace, and speech clarity using AI-powered assessment. The application combines advanced speech recognition with personalized coaching to help users improve their speaking skills through structured practice sessions.
+
+## Features
+
 - **Real-time Speech Recognition**: Live transcription using Whisper.cpp
 - **Instant Feedback**: Phoneme-level accuracy scoring and pace analysis
 - **AI-Powered Coaching**: Personalized training plans using GPT-4 or Gemini
 - **Progress Tracking**: Visual analytics and streak monitoring
 - **Text-to-Speech**: Audio playback of training exercises
 - **Cross-platform UI**: Native macOS interface with PySide6
+- **Multiple Practice Modes**: Free practice and guided training sessions
+- **Session Analytics**: Real-time WPM and accuracy metrics
 
-## 📋 Prerequisites
+## Quick Start
+
+### Using run.sh (Recommended)
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd voice_training_app
+
+# Make run script executable and start
+chmod +x run.sh
+./run.sh
+```
+
+The `run.sh` script will:
+1. Check and install system dependencies
+2. Set up Python virtual environment
+3. Install required packages
+4. Download AI models
+5. Launch the application
+
+### Manual Quick Start
+
+```bash
+# Activate environment and run
+pyenv activate voicecoach
+python main.py
+```
+
+## Installation
+
+### Prerequisites
+
 - **macOS** (tested on macOS 14+)
 - **Python 3.12+**
 - **Homebrew** (for audio dependencies)
 - **API Keys**: OpenAI or Google Gemini for LLM features
 
-## 🛠️ Installation
+### macOS Installation
 
-### Quick Install (macOS)
+#### Automated Installation
+
 ```bash
 # Clone the repository
 git clone <repository-url>
@@ -31,7 +75,8 @@ chmod +x install_voicecoach.sh
 pyenv activate voicecoach
 ```
 
-### Manual Installation
+#### Manual Installation
+
 1. **Install system dependencies:**
    ```bash
    brew install portaudio ffmpeg espeak-ng cmake pkg-config duckdb
@@ -64,10 +109,31 @@ pyenv activate voicecoach
    tar -xf amy-medium.tar.gz && cd ../..
    ```
 
-## ⚙️ Configuration
+### Linux Installation
 
-### API Keys Setup
-This application supports both OpenAI and Google Gemini for LLM-powered features:
+```bash
+# Install system dependencies (Ubuntu/Debian)
+sudo apt-get update
+sudo apt-get install portaudio19-dev ffmpeg espeak-ng cmake pkg-config
+
+# Install Python 3.12+
+sudo apt-get install python3.12 python3.12-venv python3-pip
+
+# Create virtual environment
+python3.12 -m venv voicecoach
+source voicecoach/bin/activate
+
+# Install Python packages
+pip install --upgrade pip wheel setuptools
+pip install -r requirements.txt
+
+# Download AI models (same as macOS)
+# Follow steps 4 from macOS manual installation
+```
+
+## Configuration
+
+### Environment Variables (.env)
 
 1. **Create environment file:**
    ```bash
@@ -75,161 +141,226 @@ This application supports both OpenAI and Google Gemini for LLM-powered features
    ```
 
 2. **Edit .env with your API keys:**
-   ```bash
+   ```env
    # OpenAI Configuration
    OPENAI_API_KEY=your_openai_api_key_here
    OPENAI_ORG_ID=your_openai_org_id_here  # Optional
    
-   # Google Gemini Configuration  
+   # Google Gemini Configuration
    GEMINI_API_KEY=your_gemini_api_key_here
    ```
 
-3. **Configure the provider in config.yaml:**
-   ```yaml
-   llm:
-     provider: "openai" # or "gemini"
-     model: "gpt-4o" # or "gemini-1.5-pro-latest"
-   ```
+### Application Settings (config.yaml)
+
+```yaml
+llm:
+  provider: "openai"  # or "gemini"
+  model: "gpt-4o"     # or "gemini-1.5-pro-latest"
+
+audio:
+  frame_rate: 16000
+  vad_threshold: 0.6
+
+stt:
+  model_path: "whisper.cpp/models/ggml-tiny.en.int8.bin"
+
+tts:
+  engine: "piper"  # or "coqui"
+  voice_path: "models/piper/en_US-amy-medium.onnx"
+
+ui:
+  theme: "auto"  # auto, dark, light
+```
 
 ### Getting API Keys
-- • OpenAI: Get your API key from [OpenAI Platform](https://platform.openai.com/api-keys)
-- • Google Gemini: Get your API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
 
-## 🎯 Usage
+- **OpenAI**: Get your API key from [OpenAI Platform](https://platform.openai.com/api-keys)
+- **Google Gemini**: Get your API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
 
-### Starting the Application
+## Usage
+
+### GUI Application
+
 ```bash
-# Activate the virtual environment
+# Activate environment
 pyenv activate voicecoach
 
-# Run the application
+# Launch GUI
 python main.py
 ```
 
-## 🎪 Practice modes and session flow
+### CLI Commands
 
-The voice training app provides structured practice sessions with three core modes:
+```bash
+# Run quick assessment
+python -m voice_training_app.cli assess --duration 30
 
-### Free Practice Mode
+# Start practice session
+python -m voice_training_app.cli practice --mode guided
+
+# View progress stats
+python -m voice_training_app.cli stats --days 7
+```
+
+### Practice Modes
+
+#### Free Practice Mode
 - Continuous speech recognition with real-time feedback
-- Live WPM (words per minute) and accuracy scoring
+- Live WPM and accuracy scoring
 - No time limits or structured exercises
 - Best for warm-up and general assessment
 
-### Guided Training Mode
-- AI-generated 4-week training plans with daily exercises
-- Phoneme-specific drills based on assessment results
+#### Guided Training Mode
+- AI-generated 4-week training plans
+- Phoneme-specific drills based on assessment
 - Progress tracking with streak monitoring
-- Personalized difficulty adjustment based on performance
+- Personalized difficulty adjustment
 
 ### Session Flow
-1. **Audio calibration**: System tests microphone input levels
-2. **Warm-up assessment**: 30-second free speech sample for baseline metrics
-3. **Mode selection**: Choose between free practice or guided training
-4. **Active training**: Real-time transcription with immediate phoneme and pace feedback
-5. **Session summary**: Performance analytics and improvement recommendations
-6. **Progress sync**: Results saved to local database with trend analysis
 
-### How It Works
-1. Speech Input: The app continuously listens to your microphone
-2. Real-time Transcription: Whisper.cpp transcribes your speech in real-time
-3. Assessment: Your pronunciation is analyzed for:
-   ◦ Phoneme accuracy
-   ◦ Word Error Rate (WER)
-   ◦ Speaking pace (WPM)
-4. AI Feedback: GPT-4/Gemini generates personalized training plans
-5. Progress Tracking: Visual analytics show your improvement over time
+1. **Audio Calibration**: System tests microphone input levels
+2. **Warm-up Assessment**: 30-second free speech sample for baseline
+3. **Mode Selection**: Choose between free practice or guided training
+4. **Active Training**: Real-time transcription with immediate feedback
+5. **Session Summary**: Performance analytics and recommendations
+6. **Progress Sync**: Results saved with trend analysis
 
-### Training Features
-• Live Metrics: Real-time WPM and accuracy display
-• Personalized Plans: AI-generated 4-week training programs
-• Audio Playback: Listen to training exercises with TTS
-• Progress Analytics: Sparklines and trend analysis
-• Streak Tracking: Daily practice motivation
+## Development
 
-## 🏗️ Architecture
+### Setup Development Environment
 
-```
-┌────────────────────────────────────────────────────────────┐
-│                       main.py (Async Orchestrator)        │
-└───────────────▲───────────────────────────────▲────────────┘
-                │                               │
-   mic frames   │                               │   TTS wav
-                │                               │
-┌───────────────┴──────────────┐   text/plan ┌──┴────────────────┐
-│       audio_io.py            │────────────►│  ui.py (Coach)    │
-│  • PortAudio stream          │             │  • PyObjC/PySide  │
-│  • VAD & 30 ms framing       │             │  • Live WPM gauge │
-│  • Whisper.cpp worker pool   │             │  • Feedback view  │
-│  • Piper/Coqui TTS daemon    │◄────────────│  • Menu‑bar icon  │
-└───────────────┬──────────────┘    events    └──┬───────────────┘
-                │                               │
-         transcript JSON                        │
-                │                               │
-┌───────────────▼──────────────┐   scores   ┌───▼────────────────┐
-│    assessment.py             │──────────►│ planner.py         │
-│  • Phonemizer phoneme diff   │            │  • 4‑week plan     │
-│  • JiWER WER + pace metrics  │            │  • spaced‑rep algo │
-└──────────────────────────────┘            └────────────────────┘
-                        ▲
-                        │ prompt+rubric
-                        │
-            ┌───────────┴────────────┐
-            │  prompt_engine.py      │
-            │  • GPT‑4o / Gemini     │
-            │  • Retry & cost guard  │
-            └────────────────────────┘
-```
-
-## 📊 Configuration Options
-The config.yaml file allows customization of:
-• LLM Provider: Switch between OpenAI and Gemini
-• Audio Settings: Frame rate, VAD threshold
-• STT Model: Whisper.cpp model selection
-• TTS Engine: Piper or Coqui TTS
-• UI Theme: System auto-dark/light
-• Database: SQLite with DuckDB analytics
-
-## 🧪 Testing
-Run the test suite:
 ```bash
-python -m pytest tests/
+# Clone and setup
+git clone <repository-url>
+cd voice_training_app
+pyenv activate voicecoach
+
+# Install development dependencies
+pip install -r requirements-dev.txt
+
+# Install pre-commit hooks
+pre-commit install
 ```
 
-## 📝 Logging
-Application logs are stored in logs/app.log with detailed function call tracking for debugging.
+### Project Structure
 
-## 🤝 Contributing
+```
+voice_training_app/
+├── main.py                 # Application entry point
+├── src/
+│   ├── audio_io.py        # Audio processing and I/O
+│   ├── ui.py              # GUI interface
+│   ├── assessment.py      # Speech analysis
+│   ├── planner.py         # Training plan generation
+│   └── prompt_engine.py   # LLM integration
+├── config.yaml            # Application configuration
+├── requirements.txt       # Python dependencies
+├── tests/                 # Test suite
+└── docs/                  # Documentation
+```
+
+### Contributing
+
 1. Fork the repository
-2. Create a feature branch
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make your changes
 4. Add tests for new functionality
-5. Submit a pull request
+5. Run tests (`python -m pytest`)
+6. Commit changes (`git commit -m 'Add amazing feature'`)
+7. Push to branch (`git push origin feature/amazing-feature`)
+8. Submit a pull request
 
-## 📄 License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## Testing
 
-## 🆘 Troubleshooting
+### Run Test Suite
+
+```bash
+# Run all tests
+python -m pytest tests/
+
+# Run with coverage
+python -m pytest tests/ --cov=src/
+
+# Run specific test module
+python -m pytest tests/test_assessment.py
+```
+
+### Test Categories
+
+- **Unit Tests**: Individual component testing
+- **Integration Tests**: Component interaction testing
+- **Audio Tests**: Microphone and speaker functionality
+- **UI Tests**: Interface interaction testing
+
+## Troubleshooting
 
 ### Common Issues
-Audio not working:
-• Ensure PortAudio is installed: `brew install portaudio`
-• Check microphone permissions in System Preferences
 
-Whisper model not found:
-• Run the model download script in whisper.cpp/
-• Verify the model path in config.yaml
+#### Audio Problems
+```bash
+# Issue: Audio not working
+# Solution: Install PortAudio and check permissions
+brew install portaudio
+# Check microphone permissions in System Preferences
+```
 
-API errors:
-• Check your API keys in .env
-• Verify internet connectivity
-• Ensure sufficient API credits
+#### Model Issues
+```bash
+# Issue: Whisper model not found
+# Solution: Re-download models
+cd whisper.cpp
+./models/download-ggml-model.sh tiny.en.int8
+```
 
-UI not launching:
-• Activate the virtual environment: `pyenv activate voicecoach`
-• Install PySide6: `pip install pyside6`
+#### API Errors
+```bash
+# Issue: API authentication failed
+# Solution: Check API keys
+cat .env  # Verify keys are set correctly
+curl -H "Authorization: Bearer $OPENAI_API_KEY" https://api.openai.com/v1/models
+```
+
+#### Environment Issues
+```bash
+# Issue: Python environment problems
+# Solution: Reset virtual environment
+pyenv virtualenv-delete voicecoach
+pyenv virtualenv 3.12.2 voicecoach
+pyenv activate voicecoach
+pip install -r requirements.txt
+```
+
+### Debug Mode
+
+```bash
+# Enable debug logging
+export LOG_LEVEL=DEBUG
+python main.py
+
+# Check logs
+tail -f logs/app.log
+```
+
+### Performance Issues
+
+- **High CPU Usage**: Reduce audio frame rate in config.yaml
+- **Slow Recognition**: Switch to smaller Whisper model
+- **Memory Issues**: Restart application periodically
 
 ### Getting Help
-• Check the logs in logs/app.log
-• Review the configuration in config.yaml
-• Ensure all dependencies are installed correctly
+
+1. Check application logs in `logs/app.log`
+2. Review configuration in `config.yaml`
+3. Verify all dependencies are installed
+4. Create an issue on GitHub with:
+   - Error messages
+   - System information
+   - Steps to reproduce
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+**Made with ❤️ for better communication**
