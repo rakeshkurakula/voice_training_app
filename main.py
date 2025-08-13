@@ -4,7 +4,6 @@ from assessment import compute_scores
 from planner import generate_plan, accuracy_to_cefr
 from db import CoachDB
 from progress import kpi_dataframe, sparkline_data, moving_average, month_over_month
-
 GUI_AVAILABLE = True
 try:
     from ui import CoachWindow, qasync, QtWidgets
@@ -67,10 +66,29 @@ def handle_session_start():
     print("Session started")
 
 def handle_session_end(db, user_id, latest_accuracy, cfg):
-    """Handler for session end signal"""
+    """Handler for session end signal - now regenerates plan based on latest accuracy"""
     logging.info(f"Session ended for user {user_id} with accuracy {latest_accuracy}")
     print(f"Session ended for user {user_id} with accuracy {latest_accuracy}")
-    # Additional session cleanup logic can be added here
+    
+    # Generate new plan based on latest_accuracy from the session
+    if latest_accuracy > 0:
+        try:
+            plan = generate_plan(latest_accuracy, weeks=cfg["plan"]["weeks"])
+            # Save the new plan to database
+            asyncio.create_task(_save_session_end_plan(db, user_id, latest_accuracy, plan))
+        except Exception as e:
+            logging.error(f"Error generating plan at session end: {e}")
+            print(f"Error generating plan at session end: {e}")
+
+async def _save_session_end_plan(db, user_id, accuracy, plan):
+    """Helper to save plan generated at session end"""
+    try:
+        plan_id = await db.save_plan(user_id, accuracy, plan)
+        for step in plan["steps"]:
+            await db.save_plan_step(plan_id, step["step_num"], step["description"])
+        logging.info(f"New plan saved with ID: {plan_id}")
+    except Exception as e:
+        logging.error(f"Error saving session end plan: {e}")
 
 async def persist_step_completion(db, current_plan_id, step_num, completed, ui):
     """Async function to persist step completion and refresh progress"""
@@ -82,6 +100,20 @@ async def persist_step_completion(db, current_plan_id, step_num, completed, ui):
         ui.log_message(f"Error updating step completion: {e}")
         logging.error(f"Error updating step completion: {e}")
 
+async def load_existing_plan(db, user_id):
+    """Load the most recent plan for the user from database"""
+    try:
+        # Get the most recent plan for the user
+        plan = await db.get_latest_plan(user_id)
+        if plan:
+            plan_id = plan.get('id')
+            steps = await db.get_plan_steps(plan_id)
+            return plan_id, steps
+        return None, []
+    except Exception as e:
+        logging.error(f"Error loading existing plan: {e}")
+        return None, []
+
 async def voice_loop(cfg, db: CoachDB, ui: CoachWindow, user_id: int, session_id: int):
     logging.info("[voice_loop] Started voice_loop for user_id=%s, session_id=%s", user_id, session_id)
     history_cache = []
@@ -89,7 +121,9 @@ async def voice_loop(cfg, db: CoachDB, ui: CoachWindow, user_id: int, session_id
     
     # Nonlocal variable to track latest accuracy across utterances
     latest_accuracy = 0.0
-    current_plan_id = None
+    
+    # Load existing plan at startup instead of generating new one
+    current_plan_id, existing_steps = await load_existing_plan(db, user_id)
     
     # Initialize PromptEngine with configuration
     try:
@@ -109,6 +143,14 @@ async def voice_loop(cfg, db: CoachDB, ui: CoachWindow, user_id: int, session_id
                 asyncio.create_task(persist_step_completion(db, current_plan_id, step_num, completed, ui))
         ui.step_toggled.connect(on_step_toggled)
     
+    # Update UI with existing plan steps if available
+    if existing_steps:
+        # Show only current week's steps
+        week = 1  # For now, always show week 1; can be dynamic
+        week_steps = [step for step in existing_steps if step.get("week", 1) == week]
+        ui.update_plan_steps(week_steps, play_callback_factory=lambda step: make_play_callback(step, voice_path))
+        ui.log_message(f"Loaded existing plan with {len(existing_steps)} steps")
+    
     async for hyp in transcribe_stream(cfg["stt"]["model_path"]):
         if not hyp.endswith("\n"):  # still streaming
             continue
@@ -124,23 +166,12 @@ async def voice_loop(cfg, db: CoachDB, ui: CoachWindow, user_id: int, session_id
         await db.save_metrics(utterance_id, s.__dict__)
         ui.live_metrics(s.pace_wpm, s.phoneme_acc)
         
-        # Generate and store plan based on latest accuracy
-        plan = generate_plan(s.phoneme_acc, weeks=cfg["plan"]["weeks"])
-        current_plan_id = await db.save_plan(user_id, s.phoneme_acc, plan)
-        for step in plan["steps"]:
-            await db.save_plan_step(current_plan_id, step["step_num"], step["description"])
-        
-        # --- UI: Update summary and plan steps ---
+        # --- UI: Update summary ---
         cefr = accuracy_to_cefr(s.phoneme_acc)
         last_score = s.phoneme_acc
         hist = await db.fetch_history(user_id, limit=100)
         streak = compute_streak(hist)
         ui.update_summary(cefr, last_score, streak)
-        
-        # Show only current week's steps
-        week = 1  # For now, always show week 1; can be dynamic
-        week_steps = [step for step in plan["steps"] if step["week"] == week]
-        ui.update_plan_steps(week_steps, play_callback_factory=lambda step: make_play_callback(step, voice_path))
         
         # refresh history sparklines every autosave_interval
         history_cache.append(s.__dict__)
