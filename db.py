@@ -161,6 +161,67 @@ class CoachDB:
             db.row_factory = aiosqlite.Row
             rows = await db.execute_fetchall(q, (user_id,))
             return [dict(r) for r in rows]
+    @async_log_call
+    async def fetch_latest_plan(self, user_id: int) -> dict:
+        """Fetch the most recent plan for a user."""
+        q = "SELECT * FROM plans WHERE user_id=? ORDER BY created_at DESC LIMIT 1"
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            row = await db.execute_fetchone(q, (user_id,))
+            return dict(row) if row else None
+    @async_log_call
+    async def fetch_plan_steps(self, plan_id: int, week: int | None = None) -> list[dict]:
+        """Fetch plan steps with optional week filter and include completed flag and week from plan_json."""
+        q = """
+        SELECT ps.*, p.plan_json
+        FROM plan_steps ps
+        JOIN plans p ON ps.plan_id = p.id
+        WHERE ps.plan_id = ?
+        ORDER BY ps.step_num
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(q, (plan_id,))
+            
+            steps = []
+            for row in rows:
+                step = dict(row)
+                # Parse plan_json to get week information if available
+                try:
+                    plan_data = json.loads(step['plan_json']) if step['plan_json'] else {}
+                    # Add week information if present in the plan structure
+                    if 'weeks' in plan_data and isinstance(plan_data['weeks'], list):
+                        # Find which week this step belongs to
+                        step_week = None
+                        for week_idx, week_data in enumerate(plan_data['weeks']):
+                            if 'steps' in week_data and isinstance(week_data['steps'], list):
+                                for step_data in week_data['steps']:
+                                    if step_data.get('step_num') == step['step_num']:
+                                        step_week = week_idx + 1
+                                        break
+                            if step_week:
+                                break
+                        step['week'] = step_week
+                    
+                    # Filter by week if specified
+                    if week is not None and step.get('week') != week:
+                        continue
+                        
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    # If parsing fails, continue without week info
+                    step['week'] = None
+                    if week is not None:
+                        continue
+                
+                # Remove plan_json from final result
+                step.pop('plan_json', None)
+                steps.append(step)
+                
+            return steps
+    @async_log_call
+    async def get_plan_steps(self, plan_id: int) -> list[dict]:
+        """Get all plan steps for a given plan_id."""
+        return await self.fetch_plan_steps(plan_id)
     # Optional: export via DuckDB to Parquet
     @async_log_call
     async def export_parquet(self, out_path: str, user_id: int):
