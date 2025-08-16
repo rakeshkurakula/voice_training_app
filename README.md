@@ -19,31 +19,32 @@ Voice Training App is a real-time voice and articulation training application th
 
 ## Quick Start
 
-### Using run.sh (Recommended)
+### Using dev.sh (Recommended)
 
 ```bash
 # Clone the repository
 git clone <repository-url>
 cd voice_training_app
 
-# Make run script executable and start
-chmod +x run.sh
-./run.sh
+# Make dev manager executable and start both services
+chmod +x dev.sh
+./dev.sh start
 ```
 
-The `run.sh` script will:
-1. Check and install system dependencies
-2. Set up Python virtual environment
-3. Install required packages
-4. Download AI models
-5. Launch the application
+The `dev.sh` manager will:
+1. Start the backend (FastAPI at http://localhost:8000)
+2. Start the frontend (Vite/React at http://localhost:3000)
+3. Write logs to `logs/backend.log` and `logs/frontend.log`
 
 ### Manual Quick Start
 
 ```bash
-# Activate environment and run
-pyenv activate voicecoach
-python main.py
+# Backend
+source venv/bin/activate
+cd backend && python main.py
+
+# Frontend (in a new terminal)
+cd frontend && npm run dev
 ```
 
 ## Installation
@@ -199,59 +200,34 @@ python -m voice_training_app.cli practice --mode guided
 python -m voice_training_app.cli stats --days 7
 ```
 
-## Run Script Usage
+## Dev Manager Usage (dev.sh)
 
-The `run.sh` script provides convenient commands for managing the application:
-
-### Basic Commands
+Convenient commands for managing backend and frontend:
 
 ```bash
-# Start the application (default)
-./run.sh start
+# Start both services
+./dev.sh start
 
-# Stop the running application
-./run.sh stop
+# Stop both services
+./dev.sh stop
 
-# Check application status
-./run.sh status
+# Restart both
+./dev.sh restart
 
-# Restart the application
-./run.sh restart
+# Show status (ports/PIDs)
+./dev.sh status
+
+# Tail logs (Ctrl+C to exit)
+./dev.sh logs
+
+# Backend only
+./dev.sh start:be
+./dev.sh stop:be
+
+# Frontend only
+./dev.sh start:fe
+./dev.sh stop:fe
 ```
-
-### Examples
-
-```bash
-# Start the application in the background
-./run.sh start
-# Output: Starting Voice Training App...
-# Output: Application started with PID 12345
-# Output: Logs available at: logs/app.log
-
-# Check if the application is running
-./run.sh status
-# Output: Voice Training App is running (PID: 12345)
-# Output: Log file: logs/app.log
-# Output: Uptime: 5 minutes
-
-# Stop the application
-./run.sh stop
-# Output: Stopping Voice Training App (PID: 12345)...
-# Output: Application stopped successfully
-
-# Restart the application
-./run.sh restart
-# Output: Stopping Voice Training App...
-# Output: Starting Voice Training App...
-# Output: Application restarted with PID 12346
-```
-
-### Important Notes
-
-- **Log File**: All application output is logged to `logs/app.log`
-- **PID File**: Process ID is stored in `voicecoach.pid` for process management
-- **Background Mode**: The application runs in the background when started with `./run.sh start`
-- **Auto-Setup**: The script automatically sets up the environment if not already configured
 
 ### Practice Modes
 
