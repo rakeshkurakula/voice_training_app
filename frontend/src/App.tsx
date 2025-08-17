@@ -428,6 +428,27 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
+// Add simple HTTP helpers for JSON POSTs
+async function postJson<T>(path: string, body: any): Promise<T> {
+  const res = await fetch(`http://localhost:8000${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${path} → ${res.status}`);
+  return res.json();
+}
+async function postFile<T>(path: string, file: File | Blob, filename = "audio.wav", field = "file"): Promise<T> {
+  const fd = new FormData();
+  fd.append(field, file, filename);
+  const res = await fetch(`http://localhost:8000${path}`, { method: "POST", body: fd });
+  if (!res.ok) throw new Error(`${path} → ${res.status}`);
+  return res.json();
+}
+
+// Filler lexicon
+const FILLERS = ["um","uh","like","you","you know","actually","basically","literally","so","i","i mean"];
+
 // (Inline AudioRecorder removed; imported component is used instead.)
 
 // ------------------------- Session Controls -------------------------
@@ -567,6 +588,36 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [currentWeek, setCurrentWeek] = useState(1);
   const [transcriptionConfidence, setTranscriptionConfidence] = useState<number | undefined>(undefined);
+  const [recordStartedAt, setRecordStartedAt] = useState<number | null>(null);
+  const [exerciseMetrics, setExerciseMetrics] = useState<Record<string, { words: number; wpm: number; fillerPerMin: number; bannedHits?: number; wer?: number; score?: number; feedback?: string[] }>>({});
+  const lastPartialAtRef = useRef<number | null>(null);
+
+  // Compute simple metrics from transcript and seconds
+  const computeLocalMetrics = (text: string, seconds: number, bannedWords?: string[]) => {
+    const t = (text || "").toLowerCase().trim();
+    const words = t ? t.split(/\s+/).length : 0;
+    const wpm = seconds > 0 ? Math.round((words / seconds) * 60) : 0;
+    // filler count
+    const fillerCount = FILLERS.reduce((acc, f) => {
+      const re = new RegExp(`\\b${f.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\b`, "g");
+      return acc + (t.match(re)?.length || 0);
+    }, 0);
+    const fillerPerMin = seconds > 0 ? +(fillerCount / (seconds / 60)).toFixed(1) : 0;
+    const banned = bannedWords || [];
+    const bannedHits = banned.reduce((acc, w) => acc + (t.match(new RegExp(`\\b${w}\\b`, "g"))?.length || 0), 0);
+    return { words, wpm, fillerPerMin, bannedHits };
+  };
+
+  // Optionally compute WER from backend for scripted drills
+  const computeWerIfScripted = async (reference?: string, hypothesis?: string) => {
+    if (!reference || !hypothesis) return undefined;
+    try {
+      const r = await postJson<{ wer: number }>("/metrics/wer", { reference, hypothesis });
+      return r.wer;
+    } catch {
+      return undefined;
+    }
+  };
 
   // Mock-friendly history for charts; replace with backend analytics when available
   const history = useMemo(() => {
@@ -588,6 +639,7 @@ export default function App() {
     onTranscription: (text, conf) => {
       setState((s) => ({ ...s, transcription: text }));
       setTranscriptionConfidence(conf);
+      lastPartialAtRef.current = Date.now();
     },
     onSessionStatus: (status, message) => {
       setState((s) => ({
@@ -658,10 +710,22 @@ export default function App() {
       socket.send({ type: "session_start", data: { userId: state.user?.id } });
       push({ title: "Session started", tone: "success" });
       setFocusMode(true);
+      // default active exercise to first item when entering focus
+      if (!state.activeExerciseId) {
+        const firstId = state.trainingPlan?.weeks?.[0]?.exercises?.[0]?.id;
+        if (firstId) setState((s) => ({ ...s, activeExerciseId: firstId }));
+      }
+      // Start WS diagnostics watchdog for partials
+      lastPartialAtRef.current = null;
+      setTimeout(() => {
+        if (!lastPartialAtRef.current) {
+          push({ title: "No live partials yet", description: "We’ll still compute final transcript on Stop/End.", tone: "warning" });
+        }
+      }, 2000);
     } catch (e) {
       push({ title: "Failed to start session", tone: "error" });
     }
-  }, [socket, state.user?.id, push]);
+  }, [socket, state.user?.id, push, state.activeExerciseId, state.trainingPlan]);
 
   const endSession = useCallback(async () => {
     try {
@@ -669,10 +733,19 @@ export default function App() {
       setState((s) => ({ ...s, currentSession: s.currentSession ? { ...s.currentSession, status: "ready" } : null, isRecording: false }));
       push({ title: "Session ended", tone: "info" });
       setFocusMode(false);
+      // On end, finalize metrics for active exercise if we have transcript
+      const exId = state.activeExerciseId || state.trainingPlan?.weeks?.[0]?.exercises?.[0]?.id;
+      if (exId) {
+        const seconds = recordStartedAt ? Math.max(1, Math.round((Date.now() - recordStartedAt) / 1000)) : 60;
+        const m = computeLocalMetrics(state.transcription, seconds);
+        const refText = state.trainingPlan?.weeks?.flatMap((w) => w.exercises)?.find((e) => e.id === exId)?.referenceText;
+        const wer = await computeWerIfScripted(refText, state.transcription);
+        setExerciseMetrics((prev) => ({ ...prev, [exId]: { ...m, wer } }));
+      }
     } catch (e) {
       push({ title: "Failed to end session", tone: "error" });
     }
-  }, [socket, push]);
+  }, [socket, push, state.activeExerciseId, state.trainingPlan, state.transcription, recordStartedAt]);
 
   const handleAudioChunk = useCallback(
     async (buf: ArrayBuffer) => {
@@ -756,18 +829,45 @@ export default function App() {
               onChunk={handleAudioChunk}
               onStart={() => {
                 setState((s) => ({ ...s, isRecording: true }));
+                setRecordStartedAt(Date.now());
                 socket.send({ type: "session_status", data: { status: "recording" } });
               }}
               onStop={() => {
                 setState((s) => ({ ...s, isRecording: false }));
                 socket.send({ type: "session_status", data: { status: "active" } });
+                // Compute quick metrics on stop for current exercise
+                const exId = state.activeExerciseId || state.trainingPlan?.weeks?.[0]?.exercises?.[0]?.id;
+                if (exId) {
+                  const seconds = recordStartedAt ? Math.max(1, Math.round((Date.now() - recordStartedAt) / 1000)) : 60;
+                  const m = computeLocalMetrics(state.transcription, seconds);
+                  setExerciseMetrics((prev) => ({ ...prev, [exId]: { ...prev[exId], ...m } }));
+                }
+              }}
+              onBlob={async (blob) => {
+                try {
+                  // Upload fallback to /asr
+                  const r = await postFile<{ text: string; duration_sec: number }>("/asr", blob, "take.wav");
+                  // Update transcript and recompute badges
+                  setState((s) => ({ ...s, transcription: r.text || s.transcription }));
+                  const exId = state.activeExerciseId || state.trainingPlan?.weeks?.[0]?.exercises?.[0]?.id;
+                  if (exId) {
+                    const seconds = Math.max(1, Math.round(r.duration_sec || (recordStartedAt ? (Date.now() - recordStartedAt) / 1000 : 60)));
+                    const refText = state.trainingPlan?.weeks?.flatMap((w) => w.exercises)?.find((e) => e.id === exId)?.referenceText;
+                    const m = computeLocalMetrics(r.text || state.transcription, seconds);
+                    const wer = await computeWerIfScripted(refText, r.text || state.transcription);
+                    setExerciseMetrics((prev) => ({ ...prev, [exId]: { ...m, wer } }));
+                  }
+                  push({ title: "Transcript updated", tone: "success" });
+                } catch {
+                  push({ title: "Upload ASR failed", tone: "error" });
+                }
               }}
               disabled={sessionStatus === "ready"}
             />
             <TranscriptionPanel text={state.transcription} confidence={transcriptionConfidence} />
           </div>
           {/* Sidebar Column */}
-          <div className={clsx("space-y-6", isFocusMode ? "lg:col-start-1 lg:row-start-1" : "")}>
+          <div className={clsx("space-y-6", isFocusMode ? "lg:col-start-1 lg:row-start-1" : "")}>            
             <SessionControls state={sessionStatus} onStart={startSession} onEnd={endSession} />
             <TrainingPlanView
               plan={state.trainingPlan}
@@ -779,6 +879,94 @@ export default function App() {
               activeExerciseId={state.activeExerciseId}
               onSetActive={(id) => setState(s => ({ ...s, activeExerciseId: id }))}
             />
+            {/* Recent metrics badges for active exercise */}
+            {(() => {
+              const exId = state.activeExerciseId || state.trainingPlan?.weeks?.[0]?.exercises?.[0]?.id;
+              const m = exId ? exerciseMetrics[exId] : undefined;
+              if (!m) return null;
+              return (
+                <div className="rounded-2xl border border-slate-800/50 p-4 bg-slate-800/60 ring-1 ring-inset ring-slate-700/50">
+                  <div className="text-sm font-semibold mb-2">Last Take Metrics</div>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <span className="px-2 py-1 rounded-lg border border-slate-700 bg-slate-900/50">Words: <b>{m.words}</b></span>
+                    <span className="px-2 py-1 rounded-lg border border-slate-700 bg-slate-900/50">WPM: <b>{m.wpm}</b></span>
+                    <span className="px-2 py-1 rounded-lg border border-slate-700 bg-slate-900/50">Fillers/min: <b>{m.fillerPerMin}</b></span>
+                    {typeof m.bannedHits === 'number' && (
+                      <span className={clsx("px-2 py-1 rounded-lg border bg-slate-900/50", m.bannedHits>0?"border-rose-600 text-rose-300":"border-slate-700")}>Banned: <b>{m.bannedHits}</b></span>
+                    )}
+                    {typeof m.wer === 'number' && (
+                      <span className="px-2 py-1 rounded-lg border border-slate-700 bg-slate-900/50">WER: <b>{(m.wer*100).toFixed(1)}%</b></span>
+                    )}
+                    {typeof m.score === 'number' && (
+                      <span className="px-2 py-1 rounded-lg border border-slate-700 bg-slate-900/50">Score: <b>{m.score}</b></span>
+                    )}
+                  </div>
+                  {m.feedback && m.feedback.length>0 && (
+                    <ul className="mt-2 text-xs text-slate-300 list-disc pl-4 space-y-1">
+                      {m.feedback.map((f,i)=>(<li key={i}>{f}</li>))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })()}
+            {/* LLM Panel */}
+            {(() => {
+              const [skillOptions, cefrOptions] = [["articulation","descriptive","emotion","instructional","narrative"],["A2","B1","B2","C1"]];
+              return (
+                <div className="rounded-2xl border border-slate-800/50 p-4 bg-slate-800/60 ring-1 ring-inset ring-slate-700/50 space-y-3">
+                  <div className="text-sm font-semibold">LLM Generator</div>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <select id="llm-skill" className="bg-slate-950 border border-slate-800 rounded-md p-2">
+                      {skillOptions.map(s=> <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <select id="llm-cefr" className="bg-slate-950 border border-slate-800 rounded-md p-2" defaultValue={state.user?.cefrLevel||"B2"}>
+                      {cefrOptions.map(c=> <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <input id="llm-topic" placeholder="Topic (optional)" className="bg-slate-950 border border-slate-800 rounded-md p-2" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button className="px-3 py-2 rounded-lg bg-sky-600 border border-sky-700 text-white text-xs" onClick={async()=>{
+                      const skill=(document.getElementById('llm-skill') as HTMLSelectElement).value;
+                      const cefr=(document.getElementById('llm-cefr') as HTMLSelectElement).value;
+                      const topic=(document.getElementById('llm-topic') as HTMLInputElement).value;
+                      try{
+                        const data = await postJson<{drills:any[]}>("/llm/generate-drills", {skill, cefr, topic, count:3, constraints:{banned_words:["delicious","tasty"]}});
+                        // Insert into current week's exercises
+                        const drills = data.drills||[];
+                        setState((s)=>{
+                          if(!s.trainingPlan) return s;
+                          const exs = s.trainingPlan.weeks[0].exercises.slice();
+                          drills.forEach((d:any)=>{
+                            exs.push({ id: d.id || crypto.randomUUID(), description: d.prompt || d.title, difficulty: "Medium", focus: (d.type||"Fluency").toString().charAt(0).toUpperCase()+ (d.type||"fluency").toString().slice(1), completed:false, referenceText: d.script });
+                          });
+                          const weeks=s.trainingPlan.weeks.slice();
+                          weeks[0]={...weeks[0], exercises: exs};
+                          return {...s, trainingPlan:{...s.trainingPlan,weeks}};
+                        });
+                        push({ title:"Inserted drills", tone:"success"});
+                      }catch{ push({ title:"Failed to generate drills", tone:"error"}); }
+                    }}>Generate & Insert</button>
+                    <button className="px-3 py-2 rounded-lg bg-slate-700 border border-slate-600 text-xs" onClick={async()=>{
+                      const exId = state.activeExerciseId || state.trainingPlan?.weeks?.[0]?.exercises?.[0]?.id;
+                      if(!exId) return;
+                      const m = exerciseMetrics[exId];
+                      try{
+                        const r = await postJson<{score:number; feedback:string[]; next_drill_hint?:string}>("/llm/critique", { transcript: state.transcription, metrics: m||{}, cefr: state.user?.cefrLevel||"B2", skill: "narrative" });
+                        setExerciseMetrics(prev=> ({...prev, [exId]: {...(prev[exId]||{}), score:r.score, feedback:r.feedback}}));
+                        if(r.next_drill_hint) push({ title:"Coach hint", description:r.next_drill_hint, tone:"info"});
+                      }catch{ push({ title:"Critique failed", tone:"error"}); }
+                    }}>Critique Last Take</button>
+                    <button className="px-3 py-2 rounded-lg bg-slate-700 border border-slate-600 text-xs" onClick={async()=>{
+                      try{
+                        const topic=(document.getElementById('llm-topic') as HTMLInputElement)?.value || 'general';
+                        const r = await postJson<{questions:string[]}>("/llm/followups", { topic, cefr: state.user?.cefrLevel||"B2", count:5 });
+                        push({ title:"Follow-ups", description: (r.questions||[]).slice(0,2).join(" | ") || "Generated" , tone:"info"});
+                      }catch{ push({ title:"Follow-ups failed", tone:"error"}); }
+                    }}>Follow-ups</button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </main>
         <footer className="mx-auto max-w-7xl px-4 pb-8 pt-2 text-xs text-slate-400 flex items-center justify-center gap-2">

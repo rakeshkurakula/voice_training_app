@@ -8,6 +8,7 @@ interface AudioRecorderProps {
   onStart: () => void;
   onStop: () => void;
   disabled?: boolean;
+  onBlob?: (blob: Blob) => void; // Optional: built WAV (16kHz mono) supplied on stop
 }
 
 const TARGET_SAMPLE_RATE = 16000;
@@ -56,6 +57,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
   onStart,
   onStop,
   disabled,
+  onBlob,
 }) => {
   const [error, setError] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
@@ -66,6 +68,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const rafRef = useRef<number | null>(null);
+  const pcmPartsRef = useRef<Int16Array[]>([]);
 
   const getBarColor = (value: number) => {
     if (value > 0.6) return 'from-amber-500 to-rose-500'; // Too loud
@@ -124,6 +127,8 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
           const int16 = downsampleTo16k(input, ctx.sampleRate);
           if (int16.length > 0) {
             onChunk(int16.buffer);
+            // copy this chunk for WAV assembly
+            pcmPartsRef.current.push(int16.slice());
           }
         } catch (_) {
           // ignore per-chunk errors
@@ -149,6 +154,39 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       audioCtxRef.current = null;
       mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
       mediaStreamRef.current = null;
+      // Build a WAV blob (16kHz mono) from accumulated PCM parts
+      if (onBlob && pcmPartsRef.current.length > 0) {
+        const totalSamples = pcmPartsRef.current.reduce((acc, a) => acc + a.length, 0);
+        const pcmAll = new Int16Array(totalSamples);
+        let offset = 0;
+        for (const part of pcmPartsRef.current) { pcmAll.set(part, offset); offset += part.length; }
+
+        const headerSize = 44;
+        const dataSize = pcmAll.length * 2;
+        const buffer = new ArrayBuffer(headerSize + dataSize);
+        const view = new DataView(buffer);
+        // RIFF header
+        function writeString(v: DataView, offset: number, s: string) { for (let i=0;i<s.length;i++) v.setUint8(offset+i, s.charCodeAt(i)); }
+        writeString(view, 0, 'RIFF');
+        view.setUint32(4, 36 + dataSize, true);
+        writeString(view, 8, 'WAVE');
+        writeString(view, 12, 'fmt ');
+        view.setUint32(16, 16, true); // PCM chunk size
+        view.setUint16(20, 1, true); // PCM format
+        view.setUint16(22, 1, true); // mono
+        view.setUint32(24, TARGET_SAMPLE_RATE, true);
+        view.setUint32(28, TARGET_SAMPLE_RATE * 2, true); // byte rate
+        view.setUint16(32, 2, true); // block align
+        view.setUint16(34, 16, true); // bits per sample
+        writeString(view, 36, 'data');
+        view.setUint32(40, dataSize, true);
+        // PCM data
+        let idx = 44;
+        for (let i = 0; i < pcmAll.length; i++, idx += 2) view.setInt16(idx, pcmAll[i], true);
+        const blob = new Blob([buffer], { type: 'audio/wav' });
+        onBlob(blob);
+      }
+      pcmPartsRef.current = [];
     } finally {
       onStop();
     }
@@ -159,6 +197,13 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       stop();
     }
   }, [isActive, stop]);
+
+  // Auto-start when session becomes active (disabled goes false) and we're not already recording
+  useEffect(() => {
+    if (!disabled && !processorRef.current && !isActive) {
+      start();
+    }
+  }, [disabled, isActive, start]);
 
   return (
     <div className="rounded-2xl border border-slate-800/50 p-4 bg-slate-800/60 shadow-lg ring-1 ring-inset ring-slate-700/50">

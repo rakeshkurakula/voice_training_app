@@ -19,6 +19,13 @@ from pydantic import BaseModel
 import uvicorn
 from faster_whisper import WhisperModel
 import wave
+import time
+
+try:
+    from openai import OpenAI  # openai>=1.0
+    _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY")) if os.getenv("OPENAI_API_KEY") else None
+except Exception:
+    _openai_client = None
 
 # Import existing modules
 import sys
@@ -76,6 +83,38 @@ class AudioAssessment(BaseModel):
 class WSMessage(BaseModel):
     type: str
     data: dict
+
+class ASRResp(BaseModel):
+    text: str
+    duration_sec: float
+
+class WERReq(BaseModel):
+    reference: str
+    hypothesis: str
+class WERResp(BaseModel):
+    wer: float
+
+# --------- LLM models (request schemas) ---------
+class Constraints(BaseModel):
+    banned_words: list[str] | None = None
+
+class GenReq(BaseModel):
+    skill: str
+    cefr: str
+    topic: str | None = None
+    count: int = 3
+    constraints: Constraints | None = None
+
+class CritiqueReq(BaseModel):
+    transcript: str
+    metrics: dict
+    cefr: str
+    skill: str
+
+class FollowReq(BaseModel):
+    topic: str
+    cefr: str
+    count: int = 5
 
 # Connection manager for WebSockets
 class ConnectionManager:
@@ -423,6 +462,162 @@ async def transcribe_audio(audio_file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Transcription failed: {e}")
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+# === Plan.md compatibility endpoints ===
+@app.post("/asr", response_model=ASRResp)
+async def asr_endpoint(file: UploadFile = File(...)):
+    """ASR endpoint returning { text, duration_sec } for an uploaded file (webm/wav/mp3)."""
+    start_t = time.time()
+    try:
+        with tempfile.TemporaryDirectory(prefix="vc_asr_") as td:
+            src_path = os.path.join(td, file.filename or "audio")
+            with open(src_path, "wb") as f:
+                f.write(await file.read())
+            # Faster-Whisper can ingest many formats directly
+            segments, info = fw_model.transcribe(
+                src_path,
+                language="en",
+                vad_filter=False,
+                beam_size=1,
+                temperature=0.0,
+            )
+            text = " ".join([s.text.strip() for s in segments]).strip()
+            duration_sec = float(getattr(info, "duration", time.time() - start_t))
+            return ASRResp(text=text, duration_sec=duration_sec)
+    except Exception as e:
+        logger.error(f"/asr failed: {e}")
+        raise HTTPException(status_code=500, detail="ASR failed")
+
+def _levenshtein_distance_words(ref_words: list[str], hyp_words: list[str]) -> int:
+    m, n = len(ref_words), len(hyp_words)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(m + 1):
+        dp[i][0] = i
+    for j in range(n + 1):
+        dp[0][j] = j
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            cost = 0 if ref_words[i - 1] == hyp_words[j - 1] else 1
+            dp[i][j] = min(
+                dp[i - 1][j] + 1,      # deletion
+                dp[i][j - 1] + 1,      # insertion
+                dp[i - 1][j - 1] + cost  # substitution
+            )
+    return dp[m][n]
+
+@app.post("/metrics/wer", response_model=WERResp)
+async def wer_endpoint(req: WERReq):
+    ref_words = req.reference.strip().split()
+    hyp_words = req.hypothesis.strip().split()
+    dist = _levenshtein_distance_words(ref_words, hyp_words)
+    denom = max(1, len(ref_words))
+    return WERResp(wer=round(dist / denom, 3))
+
+# ================= LLM endpoints (with mock fallback) =================
+SYSTEM_GEN = (
+    "You are VoiceCoach, generating CEFR-appropriate drills. Reply ONLY JSON. "
+    "Shape: {\"drills\":[{\"id\":\"string\",\"title\":\"string\",\"type\":\"articulation|descriptive|emotion|instructional|narrative\",\"prompt\":\"string\",\"script\":\"optional string\",\"constraints\":{\"banned_words\":[\"...\"]}}]}\n"
+)
+
+SYSTEM_CRIT = (
+    "You are a concise speech coach. Given transcript + metrics, return JSON: "
+    "{\"score\":0-100, \"feedback\":[\"..\",\"..\"], \"next_drill_hint\":\"...\"}."
+)
+
+SYSTEM_FOLLOW = (
+    "Return JSON of the form {\"questions\":[\"short CEFR-consistent questions\"]}"
+)
+
+MODEL = os.getenv("VC_MODEL", "gpt-4o-mini")
+
+@app.post("/llm/generate-drills")
+async def generate_drills(req: GenReq):
+    # Mock fallback
+    if _openai_client is None:
+        drills = []
+        for i in range(req.count):
+            drills.append({
+                "id": f"mock_{i+1}",
+                "title": f"{req.skill.title()} Drill {i+1}",
+                "type": req.skill,
+                "prompt": f"Talk about {req.topic or 'any topic'} for 60s with clear pacing.",
+                "constraints": (req.constraints.model_dump() if req.constraints else None),
+            })
+        return {"drills": drills}
+    # Live call
+    messages = [
+        {"role": "system", "content": SYSTEM_GEN},
+        {"role": "user", "content": f"skill={req.skill}; cefr={req.cefr}; topic={req.topic}; count={req.count}; constraints={req.constraints.model_dump() if req.constraints else {}}"},
+    ]
+    try:
+        resp = _openai_client.chat.completions.create(model=MODEL, messages=messages, temperature=0.7)
+        text = resp.choices[0].message.content
+        import json, re
+        try:
+            data = json.loads(text)
+        except Exception:
+            text = re.search(r"\{[\s\S]*\}", text).group(0)
+            data = json.loads(text)
+        # ensure IDs/types
+        for d in data.get("drills", []):
+            d.setdefault("id", os.urandom(4).hex())
+            d.setdefault("type", req.skill)
+        return data
+    except Exception as e:
+        logger.warning(f"/llm/generate-drills failed: {e}")
+        raise HTTPException(status_code=500, detail="generate-drills failed")
+
+@app.post("/llm/critique")
+async def critique(req: CritiqueReq):
+    if _openai_client is None:
+        score = 75
+        fb = [
+            "Good clarity overall.",
+            "Reduce fillers to <4/min.",
+            "Add two emphasis peaks for key nouns.",
+        ]
+        return {"score": score, "feedback": fb, "next_drill_hint": "Shadow a 60s paragraph at 140 WPM"}
+    messages = [
+        {"role": "system", "content": SYSTEM_CRIT},
+        {"role": "user", "content": f"metrics={req.metrics}; cefr={req.cefr}; skill={req.skill}; transcript=```{req.transcript}```"},
+    ]
+    try:
+        r = _openai_client.chat.completions.create(model=MODEL, messages=messages, temperature=0.4)
+        text = r.choices[0].message.content
+        import json, re
+        try:
+            return json.loads(text)
+        except Exception:
+            text = re.search(r"\{[\s\S]*\}", text).group(0)
+            return json.loads(text)
+    except Exception as e:
+        logger.warning(f"/llm/critique failed: {e}")
+        raise HTTPException(status_code=500, detail="critique failed")
+
+@app.post("/llm/followups")
+async def followups(req: FollowReq):
+    if _openai_client is None:
+        return {"questions": [
+            f"What landmark do you pass first near {req.topic}?",
+            "How would you simplify the route?",
+            "Which step could be merged to reduce confusion?",
+        ]}
+    messages = [
+        {"role": "system", "content": SYSTEM_FOLLOW},
+        {"role": "user", "content": f"topic={req.topic}; cefr={req.cefr}; count={req.count}"},
+    ]
+    try:
+        r = _openai_client.chat.completions.create(model=MODEL, messages=messages, temperature=0.6)
+        text = r.choices[0].message.content
+        import json, re
+        try:
+            return json.loads(text)
+        except Exception:
+            text = re.search(r"\{[\s\S]*\}", text).group(0)
+            return json.loads(text)
+    except Exception as e:
+        logger.warning(f"/llm/followups failed: {e}")
+        raise HTTPException(status_code=500, detail="followups failed")
 
 @app.post("/audio/assess")
 async def assess_pronunciation(assessment: AudioAssessment):
